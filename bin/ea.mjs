@@ -354,6 +354,44 @@ function finalize(ev, dir) {
 
 // ---------- subtitles ----------
 
+const srtTime = (t) => {
+  const [h, m, rest] = t.trim().split(":");
+  return Number(h) * 3600 + Number(m) * 60 + Number(rest.replace(",", "."));
+};
+
+/**
+ * Removes Whisper's two habitual hallucinations: text "heard" in silence
+ * (cues mostly inside a detected silent stretch — "Thank you." over a waiting
+ * screen) and loops (the same line repeated back-to-back). Renumbers the rest.
+ */
+export function cleanSrt(text, silent = []) {
+  const cues = text
+    .replace(/\r/g, "")
+    .split(/\n\s*\n/)
+    .map((b) => b.trim().split("\n"))
+    .filter((l) => l.length >= 3 && l[1].includes("-->"))
+    .map((l) => {
+      const [a, b] = l[1].split("-->");
+      return { start: srtTime(a), end: srtTime(b), time: l[1], text: l.slice(2).join("\n").trim() };
+    });
+  const norm = (t) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const kept = [];
+  for (const c of cues) {
+    const len = Math.max(0.001, c.end - c.start);
+    const quiet = silent.reduce(
+      (acc, s) => acc + Math.max(0, Math.min(c.end, s.end ?? Infinity) - Math.max(c.start, s.start)),
+      0,
+    );
+    if (quiet / len > 0.8) continue;
+    const prev = kept[kept.length - 1];
+    if (prev && norm(prev.text) === norm(c.text) && c.start - prev.end < 30) continue;
+    if (!norm(c.text)) continue;
+    kept.push(c);
+  }
+  const out = kept.map((c, i) => `${i + 1}\n${c.time}\n${c.text}\n`).join("\n");
+  return { text: out, dropped: cues.length - kept.length };
+}
+
 const WHISPER_MODEL =
   process.env.EA_WHISPER_MODEL || join(homedir(), ".event-agent", "models", "ggml-large-v3-turbo.bin");
 
@@ -381,7 +419,9 @@ function subtitle(file, { lang = "en", srtOnly = false } = {}) {
   try {
     execFileSync(
       "whisper-cli",
-      ["-m", WHISPER_MODEL, "-f", wav, "-l", lang, "-osrt", "-of", join(work, "transcript"), "-ml", "84", "-sow", "-np", "-t", "8"],
+      // -mc 0: don't feed previous text back in as context — that is what lets
+      // Whisper fall into "same sentence forever" loops on long recordings.
+      ["-m", WHISPER_MODEL, "-f", wav, "-l", lang, "-osrt", "-of", join(work, "transcript"), "-ml", "84", "-sow", "-mc", "0", "-np", "-t", "8"],
       { stdio: ["ignore", "ignore", "inherit"] },
     );
   } finally {
@@ -389,7 +429,10 @@ function subtitle(file, { lang = "en", srtOnly = false } = {}) {
   }
   if (!existsSync(join(work, "transcript.srt"))) throw new Error("whisper-cli produced no .srt");
   const srt = `${base}.srt`;
-  execFileSync("cp", [join(work, "transcript.srt"), srt]);
+  const cleaned = cleanSrt(readFileSync(join(work, "transcript.srt"), "utf8"), silences(file).silences);
+  writeFileSync(join(work, "clean.srt"), cleaned.text);
+  if (cleaned.dropped) console.error(`dropped ${cleaned.dropped} hallucinated cue(s)`);
+  execFileSync("cp", [join(work, "clean.srt"), srt]);
   rmSync(work, { recursive: true, force: true });
   if (srtOnly) return srt;
   const tmp = `${base}.subbed${file.match(/\.\w+$/)[0]}`;
@@ -677,6 +720,14 @@ switch (cmd) {
       save(ev);
     }
     console.log(`${srt} (${Math.round((now() - t0) / 60000)} min)`);
+    break;
+  }
+  case "clean-srt": {
+    // ea clean-srt <video> <srt> — re-clean an existing transcript in place
+    const srtPath = process.argv[4];
+    const r = cleanSrt(readFileSync(srtPath, "utf8"), silences(arg).silences);
+    writeFileSync(srtPath, r.text);
+    console.log(`dropped ${r.dropped} cue(s)`);
     break;
   }
   case "trim": {

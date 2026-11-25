@@ -20,6 +20,7 @@ node bin/ea.mjs doctor                # pre-flight; does a 2s silent capture (se
 node bin/ea.mjs tick                  # what launchd runs every 2 min
 node bin/ea.mjs attend <slug>         # join + record now (tick spawns this)
 node bin/ea.mjs subtitle <slug|file> [--srt-only]  # transcribe locally; add a soft track + .srt, or only the .srt
+node bin/ea.mjs clean-srt <video> <srt>  # drop hallucinated cues from an existing .srt
 node bin/ea.mjs trim <file>           # cut a silent tail >60s down to 10s
 node bin/ea.mjs silence <file> [N]    # debug: trailing silence in the last N seconds
 node bin/ea.mjs install | uninstall   # the launchd heartbeat
@@ -95,7 +96,15 @@ The 16 kHz WAV and whisper's output are written under `tmp/` and only the
 finished `.srt` is copied next to the video — recordings get moved into synced
 folders (Google Drive), and a half-written file there syncs to everyone.
 `--srt-only` leaves the video untouched; use it for files on shared drives.
-About 13 s per minute of audio on an M4 Pro.
+About 3 s per minute of audio on an M4 Pro (a 2h event takes ~6 min).
+
+Whisper hallucinates in two ways on long recordings, both seen on the first
+real run: text "heard" in silence ("Thank you." every 30s over a waiting
+screen) and loops (one sentence repeated for a minute, hiding the real speech).
+`-mc 0` stops the loops at the source — it also costs some capitalisation and
+punctuation in places, which is the trade. `cleanSrt()` then drops cues that
+lie >80% inside an ffmpeg-detected silence and collapses back-to-back
+duplicates. `ea clean-srt <video> <srt>` re-cleans an existing transcript.
 The model is 1.6 GB and lives outside the repo.
 
 ## Luma
