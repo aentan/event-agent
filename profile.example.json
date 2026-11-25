@@ -1,0 +1,11 @@
+{
+  "display_name": "Your Name",
+  "answers": {
+    "job_title": "",
+    "company": "",
+    "ai_skill_level": "",
+    "marketing_opt_in": "",
+    "holds_paid_ticket_for_hosts_conference": ""
+  },
+  "notes": "Copy to profile.json. Answers the agent gives on registration forms."
+}

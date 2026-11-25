@@ -1,0 +1,9 @@
+#!/bin/zsh
+# Runs EventRecorder.app via LaunchServices (so TCC attributes capture to the
+# bundle, not to whatever launched us), forwarding args and blocking until done.
+# Output JSON lines go to $REC_LOG (default: <out>/recorder.log).
+APP="${0:A:h}/EventRecorder.app"
+out=""; for ((i=1;i<=$#;i++)); do [[ "${@[i]}" == "--out" ]] && out="${@[i+1]}"; done
+mkdir -p "$out"
+LOG="${REC_LOG:-$out/recorder.log}"
+exec open -W -n -a "$APP" --stdout "$LOG" --stderr "$LOG" --args "$@"

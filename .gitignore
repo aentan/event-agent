@@ -1,0 +1,9 @@
+node_modules/
+recordings/
+logs/
+tmp/
+events/*
+!events/.gitkeep
+profile.json
+bin/EventRecorder.app/
+.DS_Store

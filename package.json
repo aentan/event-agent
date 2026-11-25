@@ -1,0 +1,13 @@
+{
+  "name": "event-agent",
+  "private": true,
+  "type": "module",
+  "description": "Register for online events, attend them unattended, record them, find the official recording.",
+  "scripts": {
+    "login": "node bin/ea.mjs login",
+    "tick": "node bin/ea.mjs tick"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.1"
+  }
+}
