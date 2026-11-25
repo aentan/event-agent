@@ -23,6 +23,9 @@ and leaves an MP4 in `recordings/`.
 3. Stop once the audio has been silent for 3 min after the scheduled end, or
    90 min past it at the latest. Quit Zoom, restore volume, stitch to
    `recordings/<slug>/<slug>.mp4`, trim any silent tail, notify.
+4. Transcribe locally with whisper.cpp and add the result as a soft subtitle
+   track (plus a `.srt` beside the video). Needs `brew install whisper-cpp` and
+   `ggml-large-v3-turbo.bin` in `~/.event-agent/models/`.
 
 ## Setup that is already done
 

@@ -8,6 +8,7 @@
 //   ea show <slug>        print one event's state
 //   ea set <slug> k=v …   record a field (join_url_override, join_redirect, official_recording…)
 //   ea doctor             silent pre-flight: recorder permission, Luma session, heartbeat
+//   ea subtitle <slug|file> [--srt-only]  transcribe locally (whisper.cpp); add a soft subtitle track, or just write a .srt
 //   ea tick               the scheduler's heartbeat (launchd runs it every 2 min)
 //   ea attend <slug>      join now and record until the event ends (tick calls this)
 //   ea install|uninstall  add/remove the launchd heartbeat
@@ -351,6 +352,60 @@ function finalize(ev, dir) {
   return out;
 }
 
+// ---------- subtitles ----------
+
+const WHISPER_MODEL =
+  process.env.EA_WHISPER_MODEL || join(homedir(), ".event-agent", "models", "ggml-large-v3-turbo.bin");
+
+function subtitlesAvailable() {
+  return spawnSync("which", ["whisper-cli"]).status === 0 && existsSync(WHISPER_MODEL);
+}
+
+/**
+ * Transcribes a recording locally with whisper.cpp and adds the result as a
+ * soft (toggleable) English subtitle track, plus a .srt beside the file. Video
+ * and audio are copied, not re-encoded. Returns the .srt path.
+ */
+function subtitle(file, { lang = "en", srtOnly = false } = {}) {
+  if (!subtitlesAvailable()) {
+    throw new Error(`needs whisper-cli (brew install whisper-cpp) and the model at ${WHISPER_MODEL}`);
+  }
+  if (!existsSync(file)) throw new Error(`no such file: ${file}`);
+  const base = file.replace(/\.\w+$/, "");
+  // Scratch files stay local: the recording may sit in a synced folder.
+  const work = join(ROOT, "tmp", `subtitle-${process.pid}`);
+  mkdirSync(work, { recursive: true });
+  const wav = join(work, "audio.16k.wav");
+  // whisper.cpp wants 16 kHz mono PCM.
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-i", file, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
+  try {
+    execFileSync(
+      "whisper-cli",
+      ["-m", WHISPER_MODEL, "-f", wav, "-l", lang, "-osrt", "-of", join(work, "transcript"), "-ml", "84", "-sow", "-np", "-t", "8"],
+      { stdio: ["ignore", "ignore", "inherit"] },
+    );
+  } finally {
+    rmSync(wav, { force: true });
+  }
+  if (!existsSync(join(work, "transcript.srt"))) throw new Error("whisper-cli produced no .srt");
+  const srt = `${base}.srt`;
+  execFileSync("cp", [join(work, "transcript.srt"), srt]);
+  rmSync(work, { recursive: true, force: true });
+  if (srtOnly) return srt;
+  const tmp = `${base}.subbed${file.match(/\.\w+$/)[0]}`;
+  execFileSync("ffmpeg", [
+    "-v", "error", "-y", "-i", file, "-i", srt,
+    "-map", "0:v", "-map", "0:a", "-map", "1",
+    "-c", "copy", "-c:s", "mov_text",
+    "-metadata:s:s:0", `language=${lang === "en" ? "eng" : lang}`,
+    "-metadata:s:s:0", "title=Transcript (Whisper)",
+    "-movflags", "+faststart", tmp,
+  ]);
+  rmSync(file);
+  execFileSync("mv", [tmp, file]);
+  return srt;
+}
+
 async function attend(slug) {
   let ev = load(slug);
   const url = pickJoinUrl(ev);
@@ -414,6 +469,16 @@ async function attend(slug) {
     note(ev, out ? `recording saved: ${out}` : "no usable recording");
     save(ev);
     notify(out ? "Event recorded" : "Event recording failed", `${ev.name}${out ? "" : " — see logs"}`);
+    if (out && subtitlesAvailable()) {
+      try {
+        note(ev, "transcribing for subtitles…");
+        ev.subtitles = subtitle(out);
+        note(ev, `subtitles added: ${ev.subtitles}`);
+      } catch (e) {
+        note(ev, `subtitles failed: ${e.message}`);
+      }
+      save(ev);
+    }
   }
 }
 
@@ -600,6 +665,20 @@ switch (cmd) {
   case "silence": // debug: ea silence <file> [lastSeconds]
     console.log(JSON.stringify(trailingSilence(arg, { fromEnd: Number(process.argv[4]) || undefined })));
     break;
+  case "subtitle": {
+    // ea subtitle <slug | file> [--srt-only]
+    const file = existsSync(evPath(arg)) ? load(arg).recording_file : arg;
+    const t0 = now();
+    const srt = subtitle(file, { srtOnly: process.argv.includes("--srt-only") });
+    if (existsSync(evPath(arg))) {
+      const ev = load(arg);
+      ev.subtitles = srt;
+      note(ev, `subtitles added: ${srt}`);
+      save(ev);
+    }
+    console.log(`${srt} (${Math.round((now() - t0) / 60000)} min)`);
+    break;
+  }
   case "trim": {
     const cut = trimTail(arg);
     console.log(cut ? `trimmed ${cut.toFixed(1)}s of trailing silence` : "no silent tail over 60s");

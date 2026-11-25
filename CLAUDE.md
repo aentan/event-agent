@@ -19,6 +19,7 @@ node bin/ea.mjs set <slug> k=v …      # join_url_override, join_redirect, offi
 node bin/ea.mjs doctor                # pre-flight; does a 2s silent capture (see below)
 node bin/ea.mjs tick                  # what launchd runs every 2 min
 node bin/ea.mjs attend <slug>         # join + record now (tick spawns this)
+node bin/ea.mjs subtitle <slug|file> [--srt-only]  # transcribe locally; add a soft track + .srt, or only the .srt
 node bin/ea.mjs trim <file>           # cut a silent tail >60s down to 10s
 node bin/ea.mjs silence <file> [N]    # debug: trailing silence in the last N seconds
 node bin/ea.mjs install | uninstall   # the launchd heartbeat
@@ -81,6 +82,21 @@ Window-title detection exists in the recorder (`--window-title`) but the
 launcher no longer passes it: Luma hands out `/j/` links for Zoom *webinars*,
 so the window title can't be predicted. The first real run (2026-11-25) never
 matched "Meeting", hit the old 30-min overrun, and cut the event's Q&A off.
+
+## Subtitles
+
+`subtitle()` extracts 16 kHz mono audio, runs `whisper-cli` (Homebrew
+`whisper-cpp`, Metal) with `ggml-large-v3-turbo.bin` from
+`~/.event-agent/models/` (override with `EA_WHISPER_MODEL`), then muxes the
+`.srt` in as a `mov_text` track with `-c copy` — soft, never burned in, and the
+`.srt` stays beside the MP4. `attend()` runs it after saving the recording when
+both the binary and the model exist; a failure there is logged, never fatal.
+The 16 kHz WAV and whisper's output are written under `tmp/` and only the
+finished `.srt` is copied next to the video — recordings get moved into synced
+folders (Google Drive), and a half-written file there syncs to everyone.
+`--srt-only` leaves the video untouched; use it for files on shared drives.
+About 13 s per minute of audio on an M4 Pro.
+The model is 1.6 GB and lives outside the repo.
 
 ## Luma
 
